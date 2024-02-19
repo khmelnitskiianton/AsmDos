@@ -237,8 +237,9 @@ draw_frame      proc
         @@do_if2:
                 mov cx, 2
                 sub di, [bp+12]
+                sub di, [bp+12]
                 add di, 4
-                add di, 120
+                add di, 160
         @@end_if2:
                 movsb
                 mov byte ptr es:[di], bh
