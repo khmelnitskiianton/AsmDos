@@ -56,50 +56,51 @@ Start:	        ;1) Save addr of intr vector with 35H
                 ;sizeof(prog)/16+1 = SIZE OF CODE IN 16 byte paragraphs
 		mov ax, 3100h   ;Code of intr Dos: Terminate & Stay Resident
 		int 21h         ;intr Dos Fn 31H need ax, dx
-
 ;-------------------------------------------------------------------
 ;-----------------------------INTERRUPT-----------------------------
 IntOverride09	proc
         push bp
         mov bp, sp
-        sub sp, 4          ;2 locals
+        sub sp, 8          ;4 locals
         push ax bx cx dx   ;Change ax, but save in stack
         ;Take ip cs from stack after intr
-        mov cx, [bp+4] ;ip
-        mov dx, [bp+6] ;cs
+        mov cx, [bp+4]   ;ip
+        mov dx, [bp+6]   ;cs
         mov [bp-2], cx   ;[bp-2] = ip
         mov [bp-4], dx   ;[bp-4] = cs
         ;Analize keyboard flags on shift
         mov ah, 02h
         int 16h     
-        ;AL := [417h] - kybd shift flag
-        mov cl, al
+        mov cl, al ;CL := AL := [417h] - kybd shift flag
         ;Take scan code and if hot key print frame
-        mov bx, offset bool_var_draw ; bool value
-
+        mov [bp-6], offset bool_var_draw ; bool value of drawing on
+        mov [bp-8], offset bool_var_butt ; of unpress button
         ;if((hotkey) && (bool==0)) bool := 1
         ;if((hotkey) && (bool==1)) bool := 0
         ;Hotkey turn on and turn off auto-timer change!  
-
+        mov bx, [bp-6]  
         in  al, 60h      ;symbol
         cmp al, HOT_KEY  ;compare hot key
         jne @@end_if1
         cmp cl, 04h      ;Check 4-byte(CTRL)
-        jne @@end_if1           
+        jne @@end_if1              
+        mov bx, [bp-6] 
         cmp byte ptr [bx], 1
         je  @@else_if1
      @@do_if1:
+        mov bx, [bp-6] 
         mov byte ptr [bx], 1
         jmp @@end_if1
      @@else_if1:
+        mov bx, [bp-6] 
         mov byte ptr [bx], 0
      @@end_if1:  
 
         ;Start do
+        mov bx, [bp-6]
         cmp byte ptr [bx], 1       ; if global bool var = true do regs(without hotkey)
-        jne @@else_if
-
-        pop dx cx bx ax          ;Revive ax, now all actual
+        pop dx cx bx ax          ;Revive regs now all actual
+        jne @@end_if
     @@do_if: 
         ;---------
         push [bp-2]
@@ -114,24 +115,21 @@ IntOverride09	proc
 	pop es
 
         call print_frame ; draw frame, ret: di - angle of frame
-        
-        ; Write text
-        add di, 4
-        add di, 160    ;shift to text
+
+        add di, 4       ;shift to angle with text
+        add di, 160   
         
         ;13 ACTUAL regs in stack now like args !!!
         call draw_regs  ;cdecl function
         pop ax bx cx dx si di 
-        add sp, 2 
-        pop sp ds es ss ;revive all actual regs
-        pop [bp-2]
+        add sp, 4
+        pop ds es ss ;revive all actual regs
         pop [bp-4]
-        ;---------
-        jmp @@end_if
-    @@else_if:
-        pop dx cx bx ax          ;Revive ax, now all actual
+        pop [bp-2]
     @@end_if:
-        mov sp,bp ; close action
+        ;-----------------
+        ; close action
+        mov sp,bp 
         pop bp
         ;Jump to old intr and run it
         ;Instruction Set Master
@@ -375,6 +373,7 @@ draw_regs       proc
     @@for_end1:            
                 ;3)Draw content of regs
                 pop di  ;revive angle
+                
                 push bp ;save bp before change
                 mov cx, AMOUNT_REGS 
         @@for_loop2:        ;for(cx = AMOUNT OF REGS; cx > 0; cx++){...}
@@ -385,7 +384,7 @@ draw_regs       proc
                 call draw_hex_word  
                 add bp,2
 
-                pop di  ;revive and set next line
+                pop di  ;revive and set next line from p.2)
                 add di, 160d
         loop @@for_loop2
                 pop bp
@@ -394,7 +393,7 @@ draw_regs       proc
                 pop si di dx cx bx ax
                 mov sp,bp ; close action
                 pop bp
-                ret 
+                ret     ;cdecl
 draw_regs endp
 ;-------------------------------------------------
 ;NAME: draw_hex_word(number)
