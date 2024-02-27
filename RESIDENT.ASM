@@ -1,5 +1,5 @@
 ;<GITHUB>: khmelnitskiianton
-;This programm use intr and draws frame with values of all registers
+;This programm use intr and rendering frame with values of all registers
 ;
 ;<Use>: run it, then hot key <CTRL+A> to start viewing registers
 ;                    hot key <CTRL+X> to stop  viewing registers 
@@ -41,7 +41,7 @@ Start:  ;1) Save addr of intr 09 vector with 35H
 	int 21h		; returns intr vector addr to <es:bx>
 	mov Old09Offs, bx ;saving old intr vector addr 09h
 	mov bx, es
-	mov Old09Seg, bx
+        mov Old09Seg, bx
         ;2) Save addr of intr 08 vector with 35H
         push 0
 	pop es   
@@ -57,6 +57,7 @@ Start:  ;1) Save addr of intr 09 vector with 35H
 	pop ds          ;ds = cs
         mov ax, 2509h   ;Dos Fn to set intr vector, AL - intr number
                                 ;<ds:dx> addr of set vector
+        cli
 	int 21h	        ;set intr vector addr
 	pop ds          ;revive ds
         ;4) Set new intr vector of 08 to our with 25H
@@ -70,18 +71,19 @@ Start:  ;1) Save addr of intr 09 vector with 35H
 	pop ds          ;revive ds
 
         ;5)End with resident new function in memory!
-	mov dx, offset EndOfProg
+	mov dx, cs:[offset EndOfProg]
 	shr dx, 4       ;Shift bytes to right
 	inc dx 		    ;dx++
         ;sizeof(prog)/16+1 = SIZE OF CODE IN 16 byte paragraphs
 	mov ax, 3100h   ;Code of intr Dos: Terminate & Stay Resident
+        sti
 	int 21h         ;intr Dos Fn 31H need ax, dx
 ;------------------------------------------------------------------------------------
 ;------------------------------------INTERRUPT---------------------------------------
 ;IntOverride09
 ;My intr of kybd to analize hot key for start drawing frame, it change global bool variable
 ;IN: nothing
-;Locals: 4
+;Locals: 0
 ;Ret: nothing
 ;At the end far jump for base intr
 IntOverride09	proc
@@ -89,15 +91,13 @@ IntOverride09	proc
         ;input action
         push bp
         mov bp, sp
-        sub sp, 6          ;1 locals
         push ax bx cx dx
         ;----------------------------------------------------
-        mov [bp-2], cs:[offset bool_flag_to_draw]  ; bool value of drawing is on!
-        ;Analize keyboard flags on shift
+        ;Analyze keyboard flags on shift
         mov ah, 02h
         int 16h     
-        mov cl, al ;CL := AL := [417h] - kybd shift flag
-        ;Analize scan code and set bool vars
+        mov cl, al      ;CL := AL := [417h] - kybd shift flag
+        ;Analyze scan code and set bool vars
         ;if (HOT_KEY & CTRL)&&(bool var == 0) {bool var := 1} else {bool var := 0} 
         in  al, 60h      ;take scan code
         cmp al, HOT_KEY_START  ;compare hot key
@@ -105,20 +105,56 @@ IntOverride09	proc
         cmp cl, 04h      ;Check flag for 4-byte(CTRL)
         jne @@end_if1  
 @@do_if1:
-        mov bx, [bp-2] 
-        mov byte ptr [bx], 1
+        mov bx, cs:[offset bool_flag_to_draw]
+        mov byte ptr [bx], 1   
+        ;End action of intr by hands
+        ;1) Register of control kybd - 61h
+        ;   Blink to kybd cntrlr - write to 61h highest bit - 1 close, 0 open
+        ;   before iret!
+        in al, 61h      ;Blink from data port to kybd cntrlr
+                        ;take position of cntrlr
+        or al, 80h      ;pos bites
+        out 61h, al     ;open kybd
+        and al, not 80h ;01111111b
+        out 61h, al
+        
+        ;2) Send cntrlr signal(to 20h reg) of End Of Interrupt = 20h :)
+        mov al, 20h     ;Send E0I to intr cntrlr
+        out     20h, al
+        pop dx cx bx ax
+        mov sp,bp 
+        pop bp
+        iret
 @@end_if1:  
+
         in  al, 60h      ;take scan code
         cmp al, HOT_KEY_STOP  ;compare hot key
-        jne @@end_if2
+        jne @@else_if2
         cmp cl, 04h      ;Check flag for 4-byte(CTRL)
-        jne @@end_if2 
+        jne @@else_if2 
 @@do_if2:
-        mov bx, [bp-2] 
+        mov bx, cs:[offset bool_flag_to_draw]
         mov byte ptr [bx], 0
-@@end_if2: 
-        ;----------------------------------------------------
-        ; close action
+        ;End action of intr by hands
+        ;1) Register of control kybd - 61h
+        ;   Blink to kybd cntrlr - write to 61h highest bit - 1 close, 0 open
+        ;   before iret!
+        in al, 61h      ;Blink from data port to kybd cntrlr
+                        ;take position of cntrlr
+        or al, 80h      ;pos bites
+        out 61h, al     ;open kybd
+        and al, not 80h ;01111111b
+        out 61h, al        
+        ;2) Send cntrlr signal(to 20h reg) of End Of Interrupt = 20h :)
+        mov al, 20h     ;Send E0I to intr cntrlr
+        out     20h, al
+
+        pop dx cx bx ax
+        mov sp,bp 
+        pop bp
+        iret
+@@else_if2:
+        ;End action of intr by doing dos intr
         pop dx cx bx ax
         mov sp,bp 
         pop bp
@@ -128,7 +164,9 @@ IntOverride09	proc
         ;next - arguments
         Old09Offs dw 0
         Old09Seg  dw 0
-        nop
+@@end_if2: 
+        ;----------------------------------------------------
+        ; close action
 IntOverride09   endp
 ;--------------------------------------------------------------------------------------
 ;IntOverride08
@@ -142,18 +180,17 @@ IntOverride08	proc
         ;input action
         push bp
         mov bp, sp
-        sub sp, 8          ;4 locals
-        mov [bp-8], sp          ; save sp
+        sub sp, 6          ;3 locals
+        mov [bp-6], sp          ; save sp
         push bx
         ;----------------------------------------------------------
         ;Take scan code and if hot key print frame
-        mov [bp-6], offset bool_flag_to_draw  ; bool value of drawing is on!
-        mov bx, [bp-8]
-        add bx, 16
-        mov [bp-8], bx
+        mov bx, [bp-6]
+        add bx, 14
+        mov [bp-6], bx
         ;if(global_bool_var == 1) {<draw frame with regs>}
 @@begin_if:    
-        mov bx, [bp-6] 
+        mov bx, cs:[offset bool_flag_to_draw]
         cmp byte ptr [bx], 1
         pop bx     
         jne @@end_if
@@ -166,21 +203,22 @@ IntOverride08	proc
         mov [bp-4], cx   ;[bp-4] = cs
         pop cx
 
-        push [bp-4]             ;push all in stack for actual values
-        push [bp-2]             ;for future cdecl function "draw_regs"
+        push [bp-4]      ;push all in stack for actual values
+        push [bp-2]      ;for future cdecl function "draw_regs"
         push ss es ds
-        push [bp-8]
+        push [bp-6]
         push [bp] 
         push di si dx cx bx ax 
         
         push cs         ;Changes only cs and ip in intr
         pop ds          ;We need to set ds := cs because of ds:[si] := cs:[si]
+
         push PTR_VIDMEM ;Set es = videomem
 	pop es
 
-        call print_frame ;draw frame, ret: di - angle of frame
+        call print_frame        ;draw frame, ret: di - angle of frame
 
-        add di, 4       ;shift to angle with text
+        add di, 4               ;shift to angle with text
         add di, WINDOW_WIDTH   
         
         ;13 ACTUAL regs in stack now like args !!!
@@ -188,8 +226,8 @@ IntOverride08	proc
         pop ax bx cx dx si di ;revive all actual regs
         add sp, 4
         pop ds es ss
+        pop [bp-2]
         pop [bp-4]
-        pop [bp-6]
 @@end_if:
         ;-------------------------------------------------
         ; close action
@@ -244,7 +282,7 @@ print_frame	proc
         ;4) Set start position di
         ; di = center-length/2*2(word)-160*(width/2)
         mov ax, MY_LENGTH   ;length
-        mov cl, 2d
+        mov cl, 2
         div cl
 @@begin_if:    ;check if (di % 2 != 0) - need align 1 byte!
                 cmp ah, 0
@@ -302,7 +340,7 @@ print_frame	proc
         ;----------------------------
                 
         xor cx,cx       ;for (i = 2; i < width;i++){draw_line}
-        add cx, 2d      ;because of borders
+        add cx, 2      ;because of borders
 @@for_loop: 
         cmp cx, MY_WIDTH       ;width
         jae @@for_end
@@ -425,7 +463,7 @@ draw_regs      proc
         add di, 2
 
         pop di  ;revive and set next line
-        add di, 160d
+        add di, WINDOW_WIDTH
 
         inc word ptr [bp-2]
         jmp @@for_loop1
@@ -444,7 +482,7 @@ draw_regs      proc
         add bp,2
 
         pop di  ;revive and set next line from p.2)
-        add di, 160d
+        add di, WINDOW_WIDTH
         loop @@for_loop2
         pop bp
         ;---------------------------------
@@ -504,7 +542,7 @@ draw_hex_word   proc
 draw_hex_word   endp
 ;-----------------------------------------------------------------------
 ;--------------------------------CONSTANTS------------------------------
-bool_flag_to_draw db 0
+bool_flag_to_draw db 0  ;global bool variable to on/off drawing frame with regs
 
 style_frame     db 0c9h, 0cdh, 0bbh, 0bah, 020h, 0bah, 0c8h, 0cdh, 0bch  ;style string of frame
 name_of_regs    db 'ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es', 'ss', 'cs', 'ip' ;names of regs
